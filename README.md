@@ -8,17 +8,24 @@ the kind wearable devices produce (PPG, ECG, accelerometer, EDA).
 
 ```
 notebooks/
-  images/        interpretability on image models (ViT / CNN)
+  images/        interpretability on image models
   time_series/   the same method families applied to 1D signals
-src/ts_interp/   reusable data / model / attribution code for the TS notebooks
+src/img_interp/  baselines, integrated gradients, expected gradients  (TensorFlow)
+                 -> see src/img_interp/README.md for developer notes
+src/ts_interp/   data / model / attribution / dynamask / causal        (PyTorch)
                  -> see src/ts_interp/README.md for developer notes
 ```
 
-The notebooks use `src/ts_interp` in a line or two per call, which keeps them
-readable but hides the details. **[`src/ts_interp/README.md`](src/ts_interp/README.md)**
-is the reference for what each function does, the shape conventions, the metric
+The notebooks call `src/` in a line or two per function, which keeps them
+readable but hides the details. The two `README.md` files under `src/` are the
+reference for what each function does, the shape conventions, the metric
 pitfalls, and exactly where these compact reimplementations diverge from the
 published methods.
+
+**On the two frameworks.** `img_interp` is TensorFlow because the image notebook
+grew out of the TF tutorial and its TF-Hub Inception V1; `ts_interp` is PyTorch.
+No code crosses between them, and porting either to match the other would be
+churn for no gain.
 
 ## Setup
 
@@ -27,33 +34,53 @@ pip install -r requirements.txt
 jupyter lab
 ```
 
-The time-series notebooks add `src/` to `sys.path`, so no install step is needed.
+Notebooks add `src/` to `sys.path`, so no install step is needed. The image
+notebooks additionally download ~220 MB of real photographs the first time they
+run (cached afterwards), used as Expected Gradients baselines.
 
 ## Notebooks
 
 Read in this order — each builds on the previous one's result.
 
+**Time series** — read in order; each builds on the previous one's result.
+
 | Notebook | What it covers |
 | --- | --- |
-| [`time_series/occlusion_vs_integrated_gradients.ipynb`](notebooks/time_series/occlusion_vs_integrated_gradients.ipynb) | Occlusion vs. Integrated Gradients on a synthetic wearable-style PPG signal, scored against a known ground-truth event window |
-| [`time_series/temporal_saliency_rescaling.ipynb`](notebooks/time_series/temporal_saliency_rescaling.ipynb) | Why IG underperformed, and whether TSR fixes it. Moves to 3-channel data, since TSR is vacuous on a single channel |
-| [`time_series/dynamask.ipynb`](notebooks/time_series/dynamask.ipynb) | Learned masks vs. fixed windows, and the regime where occlusion's attribution *magnitudes* stop meaning anything |
-| [`time_series/causal_and_counterfactual.ipynb`](notebooks/time_series/causal_and_counterfactual.ipynb) | Counterfactual explanations, then causal discovery — the shift from explaining a *model* to explaining the *data* |
-| [`images/integrated_gradients_vit.ipynb`](notebooks/images/integrated_gradients_vit.ipynb) | Integrated Gradients on an image classifier (adapted from the TensorFlow tutorial) |
+| [`occlusion_vs_integrated_gradients.ipynb`](notebooks/time_series/occlusion_vs_integrated_gradients.ipynb) | The main harness: occlusion vs. Integrated Gradients vs. Dynamask on a synthetic wearable-style PPG signal, all scored by IoU against known ground-truth event windows |
+| [`temporal_saliency_rescaling.ipynb`](notebooks/time_series/temporal_saliency_rescaling.ipynb) | Why IG underperformed, and whether TSR fixes it. Moves to 3-channel data, since TSR is vacuous on a single channel |
+| [`dynamask.ipynb`](notebooks/time_series/dynamask.ipynb) | Dynamask internals — the Gaussian-blur perturbation operator, the area/size trade-off, and extremal-mask selection |
+| [`causal_and_counterfactual.ipynb`](notebooks/time_series/causal_and_counterfactual.ipynb) | Counterfactual explanations, then causal discovery — the shift from explaining a *model* to explaining the *data* |
+
+**Images**
+
+| Notebook | What it covers |
+| --- | --- |
+| [`baseline_diversification.ipynb`](notebooks/images/baseline_diversification.ipynb) | The IG baseline as a parameter: black vs. noise vs. real-image vs. blurred, plus Expected Gradients averaged over 25 real baselines |
+| [`integrated_gradients_vit.ipynb`](notebooks/images/integrated_gradients_vit.ipynb) | The starting point — IG with a single black baseline (adapted from the TensorFlow tutorial) |
 
 ### Results so far
 
-Scored as IoU between the top-attributed timesteps and the known event window
-(`k` = true event length), on the 3-channel dataset, 75 event samples:
+**Time-series attribution.** IoU between the top-attributed timesteps and the
+known event window (`k` = true event length). Single-channel dataset, 48 event
+samples:
 
-| Method | Time IoU |
+| Method | IoU |
 | --- | --- |
-| Integrated Gradients | 0.547 |
-| **TSR(IG)** | **0.706** |
-| Occlusion | 0.861 |
+| **Occlusion** | **0.827** |
+| Dynamask (extremal, `sigma_max=6`) | 0.498 |
+| Integrated Gradients | 0.484 |
+| Dynamask (extremal, `sigma_max=2`, paper default) | 0.382 |
 
-TSR recovers a substantial part of IG's gap, which is what it was designed to
-do. Three caveats worth carrying:
+Occlusion wins, but this dataset is its best case by construction — the injected
+event is compact, contiguous and roughly fixed-width, exactly what a fixed
+rectangular window assumes. Two caveats on the Dynamask row: `sigma_max=6` was
+picked by a sweep using this same IoU, so it is mildly optimistic; and the
+**extremal-mask criterion degenerates here**, returning the smallest area for
+48/48 samples because every area's fidelity error sits far below the `epsilon`
+threshold.
+
+On the 3-channel dataset (75 event samples), TSR recovers much of IG's gap —
+IG 0.547 → **TSR(IG) 0.706**, against occlusion's 0.861. Caveats worth carrying:
 
 - **Channel accuracy saturates** near 1.0 for every method on this data, so that
   axis does not discriminate. Reported rather than tuned away.
@@ -68,6 +95,33 @@ On causal discovery, pairwise Granger scores precision 0.25 on a 5-variable
 system (it fires on nearly every pair, since everything is downstream of
 `activity`); conditioning on the other variables' histories recovers the true
 graph exactly.
+
+**Image IG baselines.** Descriptive summaries of the two diagnostic curves —
+*backtrack* is how much `P(target)` gives back along the path, *saturated* is the
+fraction of the path where gradients are under 10% of peak. Fireboat image,
+Inception V1, `m_steps=50`:
+
+| Baseline | Backtrack | Saturated | Completeness err |
+| --- | --- | --- | --- |
+| black | 18.5% | 7.8% | 0.0108 |
+| random_noise | 39.4% | 56.9% | 0.0472 |
+| real_image | 7.6% | 76.5% | 0.0426 |
+| blurred | 70.7% | 11.8% | **0.0068** |
+| **expected_grads (N=25)** | **0.0%** | 54.9% | n/a |
+
+**No single baseline fixes both artefacts**, which was the surprise here.
+Expected Gradients makes the averaged path perfectly monotone — averaging over 25
+baselines cancels the individual paths' wiggles — but inherits the heavy
+saturation of the real-image baselines it averages over. The blurred baseline is
+the reverse: gradients stay alive and the integral converges best, but it
+overshoots badly, because the model is *more* confident about a partly-blurred
+fireboat than the sharp original.
+
+Also worth flagging against the usual story: the black baseline is **not** the
+worst offender on this image. It has the lowest saturation of all four. Its real
+defect is structural rather than visible in these curves — IG scales by
+`(image - baseline)`, so genuinely black pixels can never receive attribution no
+matter how much the model relies on them.
 
 All notebooks are committed **with outputs**, so the numbers are readable
 without running anything.
