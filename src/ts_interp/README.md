@@ -225,9 +225,13 @@ trivial solution wins: an all-ones mask preserves the prediction and explains
 nothing.
 
 `size_reg_factor` is **annealed geometrically** from `size_reg_factor_init` to
-`init * dilation` across training. Early on the mask explores with the area
-barely constrained; by the end the constraint dominates. Starting at full
-strength collapses the mask before fidelity has shaped it.
+`init * dilation` across training, matching the reference implementation. The
+authors' rationale: the mask should explore while the area is barely
+constrained and commit only once fidelity has shaped it, so starting at full
+strength would collapse it prematurely.
+
+That rationale is theirs, not a result measured here — the schedule is used as
+published and no ablation of it was run in this repo.
 
 `.mask` returns `(C, T)`; `.get_error()` returns the final fidelity error.
 

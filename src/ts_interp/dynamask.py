@@ -200,11 +200,14 @@ class Mask:
         fidelity term decides where the retained mass goes.
 
         ``size_reg_factor`` is annealed geometrically from
-        ``size_reg_factor_init`` to ``init * dilation`` across training. Early on
-        the mask is free to explore with the area barely constrained; by the end
-        the area constraint dominates and the mask is forced to commit. Starting
-        at the final strength tends to collapse the mask before fidelity has
-        shaped it.
+        ``size_reg_factor_init`` to ``init * dilation`` across training, matching
+        the reference implementation. The paper's rationale is that the mask
+        should be free to explore while the area is barely constrained, and be
+        forced to commit only once fidelity has shaped it — so starting at the
+        final strength would collapse the mask prematurely.
+
+        That rationale is the authors', not something measured here: the schedule
+        is used as published and no ablation of it was run in this repo.
         """
         x_t = _to_tensor(x, self.device)  # (C, T)
         x_tc = x_t.transpose(0, 1).contiguous()  # (T, C) — reference layout
