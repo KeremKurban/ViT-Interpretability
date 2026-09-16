@@ -40,8 +40,6 @@ run (cached afterwards), used as Expected Gradients baselines.
 
 ## Notebooks
 
-Read in this order — each builds on the previous one's result.
-
 **Time series** — read in order; each builds on the previous one's result.
 
 | Notebook | What it covers |
@@ -137,6 +135,14 @@ matter how much the model relies on them.
 
 All notebooks are committed **with outputs**, so the numbers are readable
 without running anything.
+
+## Write-ups
+
+Findings from this repo written up for a general audience, in
+[`blog/`](blog/README.md). Each post is backed by a committed notebook so every
+number is reproducible.
+
+- **01** — [Your Integrated Gradients baseline is doing more work than you think](blog/01-integrated-gradients-baselines.md)
 
 ## Method survey
 
