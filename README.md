@@ -66,18 +66,30 @@ samples:
 
 | Method | IoU |
 | --- | --- |
-| **Occlusion** | **0.827** |
-| Dynamask (extremal, `sigma_max=6`) | 0.498 |
-| Integrated Gradients | 0.484 |
-| Dynamask (extremal, `sigma_max=2`, paper default) | 0.382 |
+| **Occlusion** | **0.784** |
+| Dynamask (extremal, `sigma_max=6`) | 0.481 |
+| Integrated Gradients | 0.395 |
 
 Occlusion wins, but this dataset is its best case by construction — the injected
 event is compact, contiguous and roughly fixed-width, exactly what a fixed
 rectangular window assumes. Two caveats on the Dynamask row: `sigma_max=6` was
 picked by a sweep using this same IoU, so it is mildly optimistic; and the
 **extremal-mask criterion degenerates here**, returning the smallest area for
-48/48 samples because every area's fidelity error sits far below the `epsilon`
-threshold.
+47 of 48 samples because every area's fidelity error sits orders of magnitude
+below the `epsilon=0.01` threshold. A criterion that always fires is
+indistinguishable from no criterion.
+
+`sigma_max` is coupled to the signal's timescale and cannot be inherited from
+the paper. On this data the sweep plateaus between 4 and 8 (IoU ~0.51) and falls
+off hard either side — 0.412 at the paper's default of 2, where the blur is too
+weak to perturb the burst at all, and 0.309 at 12, where it destroys the
+background too. **A near-zero fidelity error at every area is the tell that
+`sigma_max` is too small**, and it is visible without ground truth.
+
+A separate check confirms the method is doing real work rather than the area
+constraint alone: a fitted mask scores 0.552 IoU against 0.148 for a random mask
+of identical area, with fidelity error 0.006 vs 0.248
+(`scripts/validate_dynamask.py`).
 
 On the 3-channel dataset (75 event samples), TSR recovers much of IG's gap —
 IG 0.547 → **TSR(IG) 0.706**, against occlusion's 0.861. Caveats worth carrying:
