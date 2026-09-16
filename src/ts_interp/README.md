@@ -255,6 +255,24 @@ because errors are ~1e-4 to ~4e-3. Check the scale of `get_errors()` before
 reading the selected area as meaningful; `epsilon=0.01` does not transplant
 across datasets.
 
+### Sanity check: is the fidelity term doing anything?
+
+A learned mask constrained to a fixed area could in principle score well while
+the fidelity term contributes nothing — the area constraint alone would produce
+*some* mask, and on a dataset where the event occupies a large fraction of the
+signal even an arbitrary one can overlap it. The check is to compare against a
+**random mask of identical area**:
+
+| | IoU | Fidelity error |
+| --- | --- | --- |
+| fitted mask | 0.552 | 0.006 |
+| random mask, same area (0.15) | 0.148 | 0.248 |
+
+3.7x better localization and ~41x better prediction preservation, so the
+fidelity gradient is genuinely shaping where the mask lands. Worth re-running
+this if you change the perturbation operator or the loss — it is the check that
+distinguishes "the method works" from "the area constraint produced a mask".
+
 **`fit_dynamask(...)`** is a one-line convenience wrapper over a single `Mask`,
 kept for notebooks that call Dynamask alongside occlusion and IG. Its `target`
 argument is accepted for signature compatibility but unused — Dynamask preserves
