@@ -11,7 +11,14 @@ notebooks/
   images/        interpretability on image models (ViT / CNN)
   time_series/   the same method families applied to 1D signals
 src/ts_interp/   reusable data / model / attribution code for the TS notebooks
+                 -> see src/ts_interp/README.md for developer notes
 ```
+
+The notebooks use `src/ts_interp` in a line or two per call, which keeps them
+readable but hides the details. **[`src/ts_interp/README.md`](src/ts_interp/README.md)**
+is the reference for what each function does, the shape conventions, the metric
+pitfalls, and exactly where these compact reimplementations diverge from the
+published methods.
 
 ## Setup
 
@@ -24,10 +31,46 @@ The time-series notebooks add `src/` to `sys.path`, so no install step is needed
 
 ## Notebooks
 
+Read in this order — each builds on the previous one's result.
+
 | Notebook | What it covers |
 | --- | --- |
-| `notebooks/time_series/occlusion_vs_integrated_gradients.ipynb` | Occlusion vs. Integrated Gradients on a synthetic wearable-style PPG signal, scored against a known ground-truth event window |
-| `notebooks/images/integrated_gradients_vit.ipynb` | Integrated Gradients on an image classifier (adapted from the TensorFlow tutorial) |
+| [`time_series/occlusion_vs_integrated_gradients.ipynb`](notebooks/time_series/occlusion_vs_integrated_gradients.ipynb) | Occlusion vs. Integrated Gradients on a synthetic wearable-style PPG signal, scored against a known ground-truth event window |
+| [`time_series/temporal_saliency_rescaling.ipynb`](notebooks/time_series/temporal_saliency_rescaling.ipynb) | Why IG underperformed, and whether TSR fixes it. Moves to 3-channel data, since TSR is vacuous on a single channel |
+| [`time_series/dynamask.ipynb`](notebooks/time_series/dynamask.ipynb) | Learned masks vs. fixed windows, and the regime where occlusion's attribution *magnitudes* stop meaning anything |
+| [`time_series/causal_and_counterfactual.ipynb`](notebooks/time_series/causal_and_counterfactual.ipynb) | Counterfactual explanations, then causal discovery — the shift from explaining a *model* to explaining the *data* |
+| [`images/integrated_gradients_vit.ipynb`](notebooks/images/integrated_gradients_vit.ipynb) | Integrated Gradients on an image classifier (adapted from the TensorFlow tutorial) |
+
+### Results so far
+
+Scored as IoU between the top-attributed timesteps and the known event window
+(`k` = true event length), on the 3-channel dataset, 75 event samples:
+
+| Method | Time IoU |
+| --- | --- |
+| Integrated Gradients | 0.547 |
+| **TSR(IG)** | **0.706** |
+| Occlusion | 0.861 |
+
+TSR recovers a substantial part of IG's gap, which is what it was designed to
+do. Three caveats worth carrying:
+
+- **Channel accuracy saturates** near 1.0 for every method on this data, so that
+  axis does not discriminate. Reported rather than tuned away.
+- **Occlusion's magnitudes collapse >10x under redundant evidence** while its
+  *ranking* holds — so rank-based metrics like IoU never reveal the failure.
+  Occlusion scores are not effect sizes.
+- **Metric choice is load-bearing.** A fixed `top_frac` caps achievable IoU when
+  the event is long; two methods can both sit at the ceiling and look like joint
+  failures. See the developer notes.
+
+On causal discovery, pairwise Granger scores precision 0.25 on a 5-variable
+system (it fires on nearly every pair, since everything is downstream of
+`activity`); conditioning on the other variables' histories recovers the true
+graph exactly.
+
+All notebooks are committed **with outputs**, so the numbers are readable
+without running anything.
 
 ## Method survey
 
