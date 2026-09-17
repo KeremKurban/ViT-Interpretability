@@ -180,27 +180,104 @@ TSR is designed to fix and it would discriminate on a harder generator.
 
 ## `dynamask.py`
 
-**`fit_dynamask(model, x, target, baseline="zero", n_epochs=300, lr=0.05, size_reg=1.0, tv_reg=1.0, return_history=False)`**
+Follows Crabbé & van der Schaar (ICML 2021). Independent implementation, not a
+copy of the [reference repo](https://github.com/JonathanCrabbe/Dynamask).
 
-Learns a mask `M ∈ [0,1]^(C×T)` by gradient descent. Perturbed input is
-`M * x + (1 - M) * baseline`; the loss is
+⚠️ **Shape convention differs from the paper.** The paper and reference code use
+`(T, C)` — time first. This repo uses `(C, T)` everywhere, so the public API here
+takes and returns `(C, T)` and transposes internally. The internal maths is kept
+in the reference's layout so it can be read against the paper.
 
-```
-fidelity (−log p_target)  +  size_reg * mean(M)  +  tv_reg * mean|ΔM along time|
-```
+### Perturbation operators
 
-The mask is optimised in **logit space** (`sigmoid(mask_logits)`) so it stays in
-[0,1] without clamping, which keeps gradients well-behaved at the boundaries.
-Model parameters are frozen during the fit and unfrozen afterward — if you
-interleave this with training, be aware of that side effect.
+**`GaussianBlur(sigma_max=2.0)`** — the paper's operator. The mask sets the width
+of a Gaussian at each point, `sigma(t,c) = sigma_max * (1 + eps - M[t,c])`, so
+`M=1` gives a delta (original value kept) and `M=0` gives the widest blur.
+Perturbed values are a convex combination of real values from the same signal, so
+they stay in a plausible range.
 
-`baseline="mean"` replaces masked regions with each channel's mean rather than
-zero. Usually the better default: it is a less out-of-distribution perturbation
-for signals that are not zero-centred.
+This is the piece a naive implementation gets wrong. **Zeroing** a masked region
+creates a discontinuity no sensor produces, and the model's reaction to that
+cliff edge is not evidence about the signal.
 
-`size_reg` and `tv_reg` are left at generic defaults in the notebooks and were
-deliberately **not** tuned per-experiment — tuning them against the same metric
-being reported would be fitting to the test set.
+⚠️ **`sigma_max` is load-bearing and must match the signal's timescale.** Too
+small and the blur does not perturb: fidelity error sits at ~0 for every area and
+the mask is driven entirely by the size term, reporting the area constraint back
+at you. Too large and the background is destroyed too, so no mask of reasonable
+area can preserve the prediction. On the bundled dataset (burst period ~15–29
+samples) the paper's default `sigma_max=2` is in the first failure mode; ~6 works.
+
+**`FadeMovingAverage()`** — fades toward each channel's global mean. Same
+"perturb toward something plausible" idea with no locality; useful as a contrast
+that isolates how much the *local* smoothing matters.
+
+### Fitting
+
+**`Mask(perturbation, device).fit(x, black_box, loss_function=mse, keep_ratio=0.1, n_epoch=500, size_reg_factor_init=0.01, ...)`**
+
+Loss is `fidelity + size_reg_factor * size_reg + time_reg_factor * time_reg`.
+
+The **size regularisation** follows the paper: the *sorted* mask values are pushed
+toward a reference vector of `(1 - keep_ratio)` zeros followed by `keep_ratio`
+ones. That constrains the mask's **area** without dictating which entries are
+kept — fidelity decides where the retained mass lands. Without this term the
+trivial solution wins: an all-ones mask preserves the prediction and explains
+nothing.
+
+`size_reg_factor` is **annealed geometrically** from `size_reg_factor_init` to
+`init * dilation` across training, matching the reference implementation. The
+authors' rationale: the mask should explore while the area is barely
+constrained and commit only once fidelity has shaped it, so starting at full
+strength would collapse it prematurely.
+
+That rationale is theirs, not a result measured here — the schedule is used as
+published and no ablation of it was run in this repo.
+
+`.mask` returns `(C, T)`; `.get_error()` returns the final fidelity error.
+
+**`make_black_box(model, softmax=True)`** adapts a repo classifier
+(`(batch, C, T)` → logits) to the `(T, C)` → probabilities interface Dynamask
+expects. It keeps the graph intact — gradients must flow back through the model
+to the mask.
+
+### Areas and the extremal mask
+
+**`MaskGroup(perturbation).fit(x, black_box, area_list=(.1,.15,.2,.25), ...)`**
+fits one `Mask` per area. **`get_extremal_mask(threshold)`** returns the
+smallest-area mask whose fidelity error is below `threshold` (the paper's
+epsilon) — the point past which more area stops buying fidelity.
+
+⚠️ **The extremal criterion degenerates when the perturbation is weak.** If every
+area's error is already far below `threshold`, every area passes and the smallest
+is returned by default — the selection is not choosing, it is defaulting. On the
+bundled single-channel dataset this happens for 48/48 samples at `epsilon=0.01`,
+because errors are ~1e-4 to ~4e-3. Check the scale of `get_errors()` before
+reading the selected area as meaningful; `epsilon=0.01` does not transplant
+across datasets.
+
+### Sanity check: is the fidelity term doing anything?
+
+A learned mask constrained to a fixed area could in principle score well while
+the fidelity term contributes nothing — the area constraint alone would produce
+*some* mask, and on a dataset where the event occupies a large fraction of the
+signal even an arbitrary one can overlap it. The check is to compare against a
+**random mask of identical area**:
+
+| | IoU | Fidelity error |
+| --- | --- | --- |
+| fitted mask | 0.552 | 0.006 |
+| random mask, same area (0.15) | 0.148 | 0.248 |
+
+3.7x better localization and ~41x better prediction preservation, so the
+fidelity gradient is genuinely shaping where the mask lands. Worth re-running
+this if you change the perturbation operator or the loss — it is the check that
+distinguishes "the method works" from "the area constraint produced a mask".
+
+**`fit_dynamask(...)`** is a one-line convenience wrapper over a single `Mask`,
+kept for notebooks that call Dynamask alongside occlusion and IG. Its `target`
+argument is accepted for signature compatibility but unused — Dynamask preserves
+the model's *whole* output, not one class's score. For the paper's full procedure
+use `MaskGroup`.
 
 ---
 
@@ -279,7 +356,7 @@ recall / F1 against `true_edges`.
 | Module | Divergence from the reference method |
 | --- | --- |
 | `attribution.temporal_saliency_rescaling` | Follows Algorithm 1, but operates on **time blocks** (`time_stride`) rather than individual timesteps, for tractability. |
-| `dynamask` | Core objective only. Drops the authors' adaptive area-constraint and their alternative perturbation operators (moving-average, fade-to-baseline). |
+| `dynamask` | Implements the paper's `GaussianBlur` operator, sorted-mask area regularisation, annealed `size_reg_factor`, `MaskGroup` and extremal-mask selection. Omits the authors' *adaptive* area constraint (areas are supplied explicitly via `area_list`) and their other perturbation operators beyond `FadeMovingAverage`. |
 | `counterfactual` | Euclidean NUN rather than DTW; grid search over segments rather than the authors' guided search. |
 | `causal` | Linear VAR F-tests. Not PCMCI — no iterative condition selection, no nonlinear independence tests, no FDR control. |
 

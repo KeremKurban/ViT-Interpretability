@@ -1,7 +1,18 @@
+# --- shared ---
 numpy
 matplotlib
-scikit-learn
-torch
-captum
+scipy
 jupyterlab
 nbformat
+
+# --- src/ts_interp (PyTorch side) ---
+torch
+captum
+
+# --- src/img_interp (TensorFlow side) ---
+# tf-keras is required because the TF-Hub Inception V1 is a Keras 2 model and
+# TensorFlow 2.16+ ships Keras 3 by default.
+tensorflow
+tensorflow-hub
+tf-keras
+pillow
